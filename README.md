@@ -1,16 +1,16 @@
-# Spring Boot 2 demo of Resilience4j
+# Spring Boot 3 demo of Resilience4j
 
 ![Gradle Wrapper Status](https://github.com/resilience4j/resilience4j-spring-boot2-demo/actions/workflows/gradle-wrapper-validation.yml/badge.svg)
 ![Build Status](https://github.com/resilience4j/resilience4j-spring-boot2-demo/actions/workflows/gradle-build.yml/badge.svg)
 
-This demo shows how to use the fault tolerance library [Resilience4j](https://github.com/resilience4j/resilience4j) in a Spring Boot 2 application.
+This demo shows how to use the fault tolerance library [Resilience4j](https://github.com/resilience4j/resilience4j) in a Spring Boot 3 application.
 
 See [User Guide](https://resilience4j.readme.io/docs/getting-started-3) for more details.
 
-The [BackendAService](https://github.com/resilience4j/resilience4j-spring-boot2-demo/blob/master/src/main/java/io/github/robwin/service/BackendAService.java) shows how to use the Resilience4j Annotations.
+The [BackendAService](https://github.com/resilience4j/resilience4j-spring-boot3-demo/blob/master/src/main/java/io/github/robwin/service/BackendAService.java) shows how to use the Resilience4j Annotations.
 
 
-The [BackendBController](https://github.com/resilience4j/resilience4j-spring-boot2-demo/blob/master/src/main/java/io/github/robwin/controller/BackendBController.java) shows how to use the functional style and the Spring Reactor operators.
+The [BackendBController](https://github.com/resilience4j/resilience4j-spring-boot3-demo/blob/master/src/main/java/io/github/robwin/controller/BackendBController.java) shows how to use the functional style and the Spring Reactor operators.
 
 
 ## Getting Started
