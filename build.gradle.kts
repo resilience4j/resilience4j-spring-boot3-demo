@@ -14,7 +14,7 @@ apply(plugin = "io.spring.dependency-management")
 
 the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
     imports {
-        mavenBom("io.github.resilience4j:resilience4j-bom:2.0.1-SNAPSHOT")
+        mavenBom("io.github.resilience4j:resilience4j-bom:2.0.1")
     }
 }
 
@@ -30,7 +30,7 @@ repositories {
 //	resolutionStrategy.cacheChangingModulesFor 0, "seconds"
 //}
 
-val resilience4jVersion = "2.0.1-SNAPSHOT"
+val resilience4jVersion = "2.0.1"
 
 tasks.withType<Test> {
 	useJUnitPlatform()
@@ -43,7 +43,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-aop")
 
-    implementation("io.github.resilience4j:resilience4j-spring-boot3:${resilience4jVersion}")
+    	implementation("io.github.resilience4j:resilience4j-spring-boot3")
 	implementation("io.github.resilience4j:resilience4j-all") // Optional, only required when you want to use the Decorators class
 	implementation("io.github.resilience4j:resilience4j-reactor")
 	implementation("io.micrometer:micrometer-registry-prometheus")
