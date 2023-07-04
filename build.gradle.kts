@@ -14,7 +14,7 @@ apply(plugin = "io.spring.dependency-management")
 
 the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
     imports {
-        mavenBom("io.github.resilience4j:resilience4j-bom:2.0.2")
+        mavenBom("io.github.resilience4j:resilience4j-bom:2.1.0")
     }
 }
 
@@ -30,7 +30,7 @@ repositories {
 //	resolutionStrategy.cacheChangingModulesFor 0, "seconds"
 //}
 
-val resilience4jVersion = "2.0.2"
+val resilience4jVersion = "2.1.0"
 
 tasks.withType<Test> {
 	useJUnitPlatform()
