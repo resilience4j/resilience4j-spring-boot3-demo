@@ -1,7 +1,7 @@
 
 plugins {
     application
-    id("org.springframework.boot") version ("3.0.0")
+    id("org.springframework.boot") version ("3.1.5")
 }
 
 java {
