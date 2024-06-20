@@ -64,25 +64,24 @@ public class Application {
         };
     }
 
-@Bean
-public RegistryEventConsumer<Retry> myRetryRegistryEventConsumer() {
+    @Bean
+    public RegistryEventConsumer<Retry> myRetryRegistryEventConsumer() {
 
-    return new RegistryEventConsumer<Retry>() {
-        @Override
-        public void onEntryAddedEvent(EntryAddedEvent<Retry> entryAddedEvent) {
-            entryAddedEvent.getAddedEntry().getEventPublisher().onEvent(event -> LOG.info(event.toString()));
-        }
+        return new RegistryEventConsumer<Retry>() {
+            @Override
+            public void onEntryAddedEvent(EntryAddedEvent<Retry> entryAddedEvent) {
+                entryAddedEvent.getAddedEntry().getEventPublisher().onEvent(event -> LOG.info(event.toString()));
+            }
 
-        @Override
-        public void onEntryRemovedEvent(EntryRemovedEvent<Retry> entryRemoveEvent) {
+            @Override
+            public void onEntryRemovedEvent(EntryRemovedEvent<Retry> entryRemoveEvent) {
 
-        }
+            }
 
-        @Override
-        public void onEntryReplacedEvent(EntryReplacedEvent<Retry> entryReplacedEvent) {
+            @Override
+            public void onEntryReplacedEvent(EntryReplacedEvent<Retry> entryReplacedEvent) {
 
-        }
-    };
-}
-
+            }
+        };
+    }
 }
