@@ -1,7 +1,7 @@
 
 plugins {
     application
-    id("org.springframework.boot") version ("3.1.5")
+    id("org.springframework.boot") version ("3.4.1")
 }
 
 java {
@@ -14,7 +14,7 @@ apply(plugin = "io.spring.dependency-management")
 
 the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
     imports {
-        mavenBom("io.github.resilience4j:resilience4j-bom:2.1.0")
+        mavenBom("io.github.resilience4j:resilience4j-bom:2.3.0")
     }
 }
 
