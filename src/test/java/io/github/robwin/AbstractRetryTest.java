@@ -37,7 +37,7 @@ public abstract class AbstractRetryTest extends AbstractIntegrationTest {
     }
 
     protected static String getMetricName(String kind, String backend) {
-        return "resilience4j_retry_calls_total{application=\"resilience4j-demo\",kind=\"" + kind + "\",name=\"" + backend + "\",} ";
+        return "resilience4j_retry_calls_total{application=\"resilience4j-demo\",kind=\"" + kind + "\",name=\"" + backend + "\"} ";
     }
 
 }
