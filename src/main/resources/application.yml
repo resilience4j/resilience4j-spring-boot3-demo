@@ -14,9 +14,14 @@ management.health.ratelimiters.enabled: false
 
 management.dynatrace.metrics.export:
     enabled: true
+    enrich-with-dynatrace-metadata: true
     v2:
-        enrich-with-dynatrace-metadata: true
-
+        export-meter-metadata: false
+logging:
+    level:
+        io:
+            micrometer:
+                dynatrace: DEBUG
 info:
     name: ${spring.application.name}
     description: resilience4j demo
@@ -116,6 +121,13 @@ resilience4j.circuitbreaker:
                 - org.springframework.web.client.HttpClientErrorException$TooManyRequests
                 - java.util.concurrent.TimeoutException
                 - java.io.IOException
+        # Customer profile / KYC: the healthy baseline; stays CLOSED unless switched to DEGRADED or DOWN
+        customer-profile:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 10
+            failureRateThreshold: 50
+            waitDurationInOpenState: 15s
 resilience4j.retry:
     configs:
         default:
@@ -218,6 +230,16 @@ notification-service.simulation:
     mean-time-between-outages: 8m
     outage-min: 90s
     outage-max: 180s
+
+# Customer profile simulation (CustomerProfileService)
+# mode: HEALTHY | DEGRADED | DOWN. HEALTHY is the baseline; switch modes by hand to show an incident on demand.
+# The fallback serves cached profiles up to max-cache-staleness old, then a fail-safe default.
+# Change at runtime with: PUT /customers/mode/{mode}
+customer-profile.simulation:
+    mode: HEALTHY
+    baseline-error-probability: 0.005
+    degraded-error-probability: 0.5
+    max-cache-staleness: 30m
 
 resilience4j.timelimiter:
     configs:
