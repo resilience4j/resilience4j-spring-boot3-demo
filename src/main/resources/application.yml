@@ -1,5 +1,5 @@
 spring:
-    application.name: order-payment-api
+    application.name: payment-orchestration-service
     jackson.serialization.indent_output: true
 
 server:
@@ -27,7 +27,7 @@ management.metrics.tags.application: ${spring.application.name}
 management.metrics.distribution.percentiles-histogram.http.server.requests: true
 management.metrics.distribution.percentiles-histogram.resilience4j.circuitbreaker.calls: true
 
-com.intelliplatforms.bizevents.enabled: true
+com.intelliplatforms.bizevents.enabled: false
 com.intelliplatforms.bizevents.applicationId: cf0411aa-00ed-4c07-9ad2-358aaa7685aa
 com.intelliplatforms.bizevents.deviceId: 123
 
@@ -78,6 +78,44 @@ resilience4j.circuitbreaker:
             failureRateThreshold: 50
             eventConsumerBufferSize: 10
             recordFailurePredicate: io.github.robwin.exception.RecordFailurePredicate
+        # Mainframe system of record: trips on slow calls, not errors (see BankingLedgerService)
+        core-banking-ledger:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 10
+            slowCallDurationThreshold: 1500ms
+            slowCallRateThreshold: 50
+            waitDurationInOpenState: 15s
+        # Real-time fraud model: trips on its failure rate, from TimeoutExceptions thrown by the fraud-scoring TimeLimiter
+        fraud-scoring:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 10
+            failureRateThreshold: 50
+            permittedNumberOfCallsInHalfOpenState: 5
+            waitDurationInOpenState: 10s
+        # SWIFT gateway: trips on its failure rate during error bursts; validation rejects (BusinessException) are ignored
+        swift-gateway:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 8
+            failureRateThreshold: 40
+            permittedNumberOfCallsInHalfOpenState: 4
+            waitDurationInOpenState: 20s
+        # Non-critical notification hub: fails 25-45% of the time on a normal day, so the threshold is 80%;
+        # only a real outage opens it. HTTP 429 is a 4xx, so it must be listed here to count as a failure.
+        notification-service:
+            baseConfig: default
+            slidingWindowSize: 30
+            minimumNumberOfCalls: 15
+            failureRateThreshold: 80
+            permittedNumberOfCallsInHalfOpenState: 3
+            waitDurationInOpenState: 30s
+            recordExceptions:
+                - org.springframework.web.client.HttpServerErrorException
+                - org.springframework.web.client.HttpClientErrorException$TooManyRequests
+                - java.util.concurrent.TimeoutException
+                - java.io.IOException
 resilience4j.retry:
     configs:
         default:
@@ -135,6 +173,52 @@ resilience4j.ratelimiter:
             limitRefreshPeriod: 500ms
             timeoutDuration: 3s
 
+# Core banking ledger latency simulation (BankingLedgerService)
+# mode: HEALTHY | DEGRADED | SCHEDULED. SCHEDULED is slow during the last batch-window of every cycle-length.
+# Change at runtime with: PUT /ledger/mode/{mode}
+banking-ledger.simulation:
+    mode: SCHEDULED
+    cycle-length: 10m
+    batch-window: 3m
+    slow-call-probability: 0.8
+
+# Fraud scoring load simulation (FraudScoringService)
+# mode: NORMAL | PEAK | SCHEDULED. SCHEDULED ramps load up to peak-load and back down during the last
+# peak-window of every cycle-length. Change at runtime with: PUT /fraud/mode/{mode}
+fraud-scoring.simulation:
+    mode: SCHEDULED
+    cycle-length: 12m
+    peak-window: 4m
+    peak-load: 40
+
+# SWIFT gateway error-burst simulation (SwiftGatewayService)
+# mode: HEALTHY | BURSTY | OUTAGE. BURSTY starts error bursts at random times (exponential gaps around the mean).
+# Queued payments are replayed from the outbox every outbox-replay-interval while the breaker is CLOSED.
+# Change at runtime with: PUT /swift/mode/{mode}
+swift-gateway.simulation:
+    mode: BURSTY
+    mean-time-between-bursts: 4m
+    burst-min: 60s
+    burst-max: 150s
+    burst-error-probability: 0.85
+    baseline-error-probability: 0.02
+    reject-probability: 0.03
+    outbox-replay-interval: 10s
+
+# Notification hub simulation (NotificationService)
+# mode: HEALTHY | FLAKY | OUTAGE. FLAKY fails each channel at its everyday rate, plus random hub-wide outages.
+# rate-limit-share is the fraction of failures that are HTTP 429; the rest are 503s and dropped connections.
+# Change at runtime with: PUT /notifications/mode/{mode}
+notification-service.simulation:
+    mode: FLAKY
+    sms-failure-probability: 0.45
+    email-failure-probability: 0.25
+    push-failure-probability: 0.30
+    rate-limit-share: 0.6
+    mean-time-between-outages: 8m
+    outage-min: 90s
+    outage-max: 180s
+
 resilience4j.timelimiter:
     configs:
         default:
@@ -145,3 +229,8 @@ resilience4j.timelimiter:
             baseConfig: default
         backendB:
             baseConfig: default
+        # A payment can't wait long for a fraud score; past 1s the rules fallback decides instead
+        fraud-scoring:
+            baseConfig: default
+            timeoutDuration: 1s
+            cancelRunningFuture: true

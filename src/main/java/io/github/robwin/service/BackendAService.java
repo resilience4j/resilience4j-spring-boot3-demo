@@ -7,7 +7,6 @@ import com.dynatrace.openkit.util.json.objects.JSONStringValue;
 import com.dynatrace.openkit.util.json.objects.JSONValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.intelliplatforms.bizevents.autoconfigure.BizEventAgent;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -52,8 +51,8 @@ public class BackendAService implements Service {
     private static final String BACKEND_A = "backendA";
     private static final String CLAIMS_DATASET = "data/mock_pharmacy_claims_dataset.json";
 
-    @Autowired
-    private BizEventAgent bizeventAgent;
+    //@Autowired
+    //private BizEventAgent bizeventAgent;
 
     /** The "records" array from the claims dataset, loaded once at startup. */
     private final JsonNode claimRecords;
@@ -102,7 +101,7 @@ public class BackendAService implements Service {
     }
 
     @Override
-    @CircuitBreaker(name = "GetPatientBenefitGroup")
+    @CircuitBreaker(name = BACKEND_A)
     @Bulkhead(name = BACKEND_A)
     @Retry(name = BACKEND_A)
     public String failure() {
@@ -110,14 +109,14 @@ public class BackendAService implements Service {
     }
 
     @Override
-    @CircuitBreaker(name = "GetPatientEligibility")
+    @CircuitBreaker(name = BACKEND_A)
     @Bulkhead(name = BACKEND_A)
     public String ignoreException() {
         throw new BusinessException("This exception is ignored by the CircuitBreaker of backend A");
     }
 
     @Override
-    @CircuitBreaker(name = "GetPatientEligibility")
+    @CircuitBreaker(name = BACKEND_A)
     @Bulkhead(name = BACKEND_A)
     @Retry(name = BACKEND_A)
     public String success() {
@@ -159,7 +158,7 @@ public class BackendAService implements Service {
             businessData.put("ndc_code", JSONStringValue.fromString(ndc.asText()));
         }
 
-        bizeventAgent.sendBizEvent("PharmacyClaimsAdjudication", businessData);
+
 
         return "Hello World from backend A";
     }
@@ -173,7 +172,7 @@ public class BackendAService implements Service {
     }
 
     @Override
-    @CircuitBreaker(name = "GetPatientEligibility")
+    @CircuitBreaker(name = BACKEND_A)
     @Bulkhead(name = BACKEND_A)
     public String successException() {
         throw new HttpClientErrorException(HttpStatus.BAD_REQUEST, "This is a remote client exception");
@@ -248,7 +247,7 @@ public class BackendAService implements Service {
     @Override
     @Bulkhead(name = BACKEND_A, type = Type.THREADPOOL)
     @TimeLimiter(name = BACKEND_A)
-    @CircuitBreaker(name = "GetPatientEligibility")
+    @CircuitBreaker(name = BACKEND_A)
     @Retry(name = BACKEND_A)
     public CompletableFuture<String> futureFailure() {
         CompletableFuture<String> future = new CompletableFuture<>();
@@ -259,7 +258,7 @@ public class BackendAService implements Service {
     @Override
     @Bulkhead(name = BACKEND_A, type = Type.THREADPOOL)
     @TimeLimiter(name = BACKEND_A)
-    @CircuitBreaker(name ="GetPatientEligibility", fallbackMethod = "futureFallback")
+    @CircuitBreaker(name =BACKEND_A, fallbackMethod = "futureFallback")
     public CompletableFuture<String> futureTimeout() {
         Try.run(() -> Thread.sleep(5000));
         return CompletableFuture.completedFuture("Hello World from backend A");
