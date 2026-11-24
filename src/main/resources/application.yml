@@ -3,7 +3,7 @@ spring:
     jackson.serialization.indent_output: true
 
 server:
-    port: 9080
+    port: ${PORT}
 
 management.endpoints.web.exposure.include: '*'
 management.endpoint.health.show-details: always
@@ -17,6 +17,8 @@ management.dynatrace.metrics.export:
     enrich-with-dynatrace-metadata: true
     v2:
         export-meter-metadata: false
+        default-dimensions:
+            region: ${metrics.region}
 logging:
     level:
         io:
