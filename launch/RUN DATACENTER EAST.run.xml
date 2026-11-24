@@ -3,7 +3,8 @@
     <ExternalSystemSettings>
       <option name="env">
         <map>
-          <entry key="PORT" value="8080" />
+          <entry key=" REGION" value="prod-us-east-2" />
+          <entry key="PORT" value="9080" />
         </map>
       </option>
       <option name="executionName" />
@@ -18,7 +19,7 @@
           <option value="bootRun" />
         </list>
       </option>
-      <option name="vmOptions" value="-Dmetrics.region=&quot;prod-us-east-1&quot;" />
+      <option name="vmOptions" value="" />
     </ExternalSystemSettings>
     <ExternalSystemDebugServerProcess>true</ExternalSystemDebugServerProcess>
     <ExternalSystemReattachDebugProcess>true</ExternalSystemReattachDebugProcess>

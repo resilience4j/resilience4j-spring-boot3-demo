@@ -1,0 +1,534 @@
+[
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "core-banking-ledger: slow-call rate above 50%",
+      "description": "The core banking ledger (mainframe system of record) is slow: more than half of recent calls exceeded the 1.5 s slow-call threshold in 3 of the last 5 minutes. This is the condition that opens its circuit breaker.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries slowCallRate = avg(resilience4j.circuitbreaker.slow.call.rate), by:{datacenter}, interval:1m, filter:name == \"core-banking-ledger\""
+          },
+          {
+            "key": "threshold",
+            "value": "50"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "3"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "5"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "PERFORMANCE_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "Core banking ledger slow ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "Slow-call rate on the core-banking-ledger circuit breaker is above 50%. Balance inquiries are served from a stale cache and postings are queued as PENDING while the breaker is open."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "core-banking-ledger"
+          },
+          {
+            "key": "criticality",
+            "value": "critical"
+          },
+          {
+            "key": "fallback",
+            "value": "stale cached balance; postings queued as PENDING"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "fraud-scoring: model timeouts",
+      "description": "The real-time fraud model is timing out under load: more than 5 TimeLimiter timeouts per minute in 3 of the last 5 minutes. Payments are being decided by the rules fallback instead of the model.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries timeouts = sum(resilience4j.timelimiter.calls), by:{datacenter}, interval:1m, filter:name == \"fraud-scoring\" and kind == \"timeout\""
+          },
+          {
+            "key": "threshold",
+            "value": "5"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "3"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "5"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "PERFORMANCE_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "Fraud model timing out ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "The fraud-scoring TimeLimiter (1 s) is firing. Small non-wire payments are approved by rules and the rest go to manual review, so the manual review queue will grow."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "fraud-scoring"
+          },
+          {
+            "key": "criticality",
+            "value": "high"
+          },
+          {
+            "key": "fallback",
+            "value": "rules engine: small payments approved, rest to manual review"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "swift-gateway: circuit breaker open",
+      "description": "The SWIFT gateway circuit breaker was OPEN in 2 of the last 5 minutes after a burst of gateway errors. Cross-border payments are queued in the outbox until the breaker closes.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries open = max(resilience4j.circuitbreaker.state), by:{datacenter}, interval:1m, filter:name == \"swift-gateway\" and state == \"open\""
+          },
+          {
+            "key": "threshold",
+            "value": "0.5"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "2"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "3"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "AVAILABILITY_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "SWIFT gateway unavailable, payments queued ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "The swift-gateway circuit breaker is open. Payments are written to the outbox and replayed while the breaker is closed; each keeps its UETR, so replays can't create duplicates. Check outbox depth on /swift/status."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "swift-gateway"
+          },
+          {
+            "key": "criticality",
+            "value": "high"
+          },
+          {
+            "key": "fallback",
+            "value": "outbox, replayed while CLOSED"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "notification-service: sustained hub outage",
+      "description": "The notification hub's circuit breaker stayed OPEN for 3 of the last 5 minutes. Everyday provider failures (25-45%) are expected and deliberately not alerted on; only a sustained outage is.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries open = max(resilience4j.circuitbreaker.state), by:{datacenter}, interval:1m, filter:name == \"notification-service\" and state == \"open\""
+          },
+          {
+            "key": "threshold",
+            "value": "0.5"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "3"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "5"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "CUSTOM_ALERT"
+          },
+          {
+            "key": "event.name",
+            "value": "Customer notifications not being sent ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "The notification-service circuit breaker is open. Notifications are dropped by design; payments are not affected. Low urgency: check the SMS, email and push providers."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "notification-service"
+          },
+          {
+            "key": "criticality",
+            "value": "low"
+          },
+          {
+            "key": "fallback",
+            "value": "drop the notification"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "customer-profile: failure rate above 10% (early warning)",
+      "description": "The customer profile / KYC service normally fails about 0.5% of the time. A failure rate above 10% in 3 of the last 5 minutes is an early warning, before its circuit breaker opens at 50%.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries failureRate = avg(resilience4j.circuitbreaker.failure.rate), by:{datacenter}, interval:1m, filter:name == \"customer-profile\""
+          },
+          {
+            "key": "threshold",
+            "value": "10"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "3"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "5"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "ERROR_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "Customer profile service failing ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "The customer-profile failure rate is above its normal baseline. If the breaker opens, payments use cached profiles, then fail-safe defaults with conservative limits."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "customer-profile"
+          },
+          {
+            "key": "criticality",
+            "value": "medium"
+          },
+          {
+            "key": "fallback",
+            "value": "cached profile, then fail-safe defaults"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "sanctions-screening: circuit breaker open (payments held)",
+      "description": "The sanctions screening circuit breaker opened. Because screening fails closed, every outgoing payment is being HELD for compliance review. Alerts on the first open minute.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries open = max(resilience4j.circuitbreaker.state), by:{datacenter}, interval:1m, filter:name == \"sanctions-screening\" and state == \"open\""
+          },
+          {
+            "key": "threshold",
+            "value": "0.5"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "1"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "3"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "3"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "ERROR_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "Sanctions screening unavailable: payments held for compliance ({dims:datacenter})"
+          },
+          {
+            "key": "event.description",
+            "value": "The sanctions-screening circuit breaker is open after its retries were exhausted. No payment is released unscreened; held payments must be re-screened once the engine recovers. Notify compliance operations."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "sanctions-screening"
+          },
+          {
+            "key": "criticality",
+            "value": "critical"
+          },
+          {
+            "key": "fallback",
+            "value": "fail closed: hold payment for compliance review"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaId": "builtin:davis.anomaly-detectors",
+    "scope": "environment",
+    "value": {
+      "enabled": true,
+      "title": "fx-rates: circuit breaker open, per datacenter",
+      "description": "The FX rate circuit breaker was OPEN in 2 of the last 5 minutes in a datacenter, from provider errors or bad data (stale or off-market quotes). Raises a separate event for each datacenter.",
+      "source": "payment-orchestration-service circuit breaker demo",
+      "executionSettings": {},
+      "analyzer": {
+        "name": "dt.statistics.ui.anomaly_detection.StaticThresholdAnomalyDetectionAnalyzer",
+        "input": [
+          {
+            "key": "query",
+            "value": "timeseries open = max(resilience4j.circuitbreaker.state), by:{datacenter}, interval:1m, filter:name == \"fx-rates\" and state == \"open\""
+          },
+          {
+            "key": "threshold",
+            "value": "0.5"
+          },
+          {
+            "key": "alertCondition",
+            "value": "ABOVE"
+          },
+          {
+            "key": "alertOnMissingData",
+            "value": "false"
+          },
+          {
+            "key": "violatingSamples",
+            "value": "2"
+          },
+          {
+            "key": "slidingWindow",
+            "value": "5"
+          },
+          {
+            "key": "dealertingSamples",
+            "value": "3"
+          }
+        ]
+      },
+      "eventTemplate": {
+        "properties": [
+          {
+            "key": "event.type",
+            "value": "AVAILABILITY_EVENT"
+          },
+          {
+            "key": "event.name",
+            "value": "FX rates unavailable in {dims:datacenter}"
+          },
+          {
+            "key": "event.description",
+            "value": "The fx-rates circuit breaker is open in {dims:datacenter}. Quotes fail over to the other datacenter; where that fails too, cached rates are used with a wider spread, or FX payments are deferred."
+          },
+          {
+            "key": "circuit_breaker",
+            "value": "fx-rates"
+          },
+          {
+            "key": "criticality",
+            "value": "high"
+          },
+          {
+            "key": "fallback",
+            "value": "fail over to the other datacenter, then cached rate, then refuse"
+          },
+          {
+            "key": "service",
+            "value": "payment-orchestration-service"
+          }
+        ]
+      }
+    }
+  }
+]

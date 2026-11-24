@@ -57,6 +57,6 @@ dependencies {
 	implementation("io.vavr:vavr-jackson:0.10.3")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
-    implementation(files("libs/bizevent-agent-0.0.3-SNAPSHOT-plain.jar"))
+    //implementation(files("libs/bizevent-agent-0.0.3-SNAPSHOT-plain.jar"))
     implementation("com.dynatrace.openkit:openkit-java:3.3.0") // required by bizevent-agent
 }

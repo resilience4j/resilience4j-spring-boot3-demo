@@ -18,7 +18,7 @@ management.dynatrace.metrics.export:
     v2:
         export-meter-metadata: false
         default-dimensions:
-            region: ${metrics.region}
+            region: ${REGION}
 logging:
     level:
         io:
@@ -31,6 +31,12 @@ info:
     version: 0.0.1
 
 management.metrics.tags.application: ${spring.application.name}
+# Datacenter this instance runs in, added to every metric as the "datacenter" dimension.
+# Defaults to prod-us-east-1 (port 9080). Start the second instance as prod-us-east-2 on port 8080 with:
+#   .\gradlew bootRun --args="--server.port=8080 --datacenter=prod-us-east-2"
+# (or set the DATACENTER environment variable)
+datacenter: ${DATACENTER:prod-us-east-1}
+management.metrics.tags.datacenter: ${datacenter}
 management.metrics.distribution.percentiles-histogram.http.server.requests: true
 management.metrics.distribution.percentiles-histogram.resilience4j.circuitbreaker.calls: true
 

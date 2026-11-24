@@ -1,0 +1,615 @@
+{
+  "version": "7",
+  "defaultTimeframe": {
+    "from": "now()-3h",
+    "to": "now()"
+  },
+  "defaultSegments": [],
+  "sections": [
+    {
+      "id": "329273de-48cc-4050-ac5a-f2f059ea96e9",
+      "type": "markdown",
+      "markdown": "# payment-orchestration-service: circuit breaker resilience\n\nA Spring Boot payment orchestration service calls seven downstream dependencies typical of a bank's payment flow.\nEach call is protected by its own **Resilience4j circuit breaker**, and each dependency is simulated with a\n**different, realistic failure mode** and a **fallback chosen for how critical it is**. Metrics are exported with\nthe Micrometer Dynatrace registry.\n\n| Circuit breaker | Dependency | Failure mode simulated | Trips on | Threshold | Fallback |\n|---|---|---|---|---|---|\n| `core-banking-ledger` | Mainframe system of record | Slow calls during a batch window | Slow-call rate | 50% of calls > 1.5 s | Stale cached balance; postings queued as pending |\n| `fraud-scoring` | Real-time fraud model | Timeouts under load (TimeLimiter 1 s) | Failure rate | 50% | Rules engine: small payments approved, rest to manual review |\n| `swift-gateway` | SWIFT cross-border gateway | Random error bursts | Failure rate | 40% | Outbox, replayed while CLOSED (UETR keeps replays idempotent) |\n| `notification-service` | SMS / email / push providers | Fails 25-45% every day; rare outages | Failure rate | **80%** (non-critical) | Drop it |\n| `customer-profile` | Customer master / KYC | None - healthy baseline | Failure rate | 50% | Cached profile, then fail-safe defaults |\n| `sanctions-screening` | Watchlist screening engine | Errors during watchlist reloads | Failure rate | **25%** + Retry | **Fail closed**: payment held for compliance |\n| `fx-rates` | FX market data provider | HTTP errors + bad data (stale / off-market quotes) | Failure rate | 50% | Cached rate with wider spread, else refuse; multi-datacenter failover |"
+    },
+    {
+      "id": "46b16641-35ff-437e-9a30-5e054332395d",
+      "type": "markdown",
+      "markdown": "## 1. Fleet overview\nWhere every breaker stands right now, and how much of the timeframe each spent OPEN or HALF_OPEN."
+    },
+    {
+      "id": "b145f611-830b-4ad1-8204-6595a8d95036",
+      "type": "dql",
+      "title": "Current circuit breaker state",
+      "showTitle": true,
+      "showInput": false,
+      "height": 300,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries active = max(resilience4j.circuitbreaker.state), by:{name, state}, from:now()-5m, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n| fieldsAdd current = arrayLast(arrayRemoveNulls(active))\n| filter current == 1\n| fields name, state\n| sort name asc"
+        },
+        "visualization": "table",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "5843af04-6502-441c-8b1c-6133244b6443",
+      "type": "dql",
+      "title": "Breakers OPEN or HALF_OPEN over time (1 = in that state)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries active = max(resilience4j.circuitbreaker.state), by:{name, state},\n  filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\")) and (state == \"open\" or state == \"half_open\")"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "e99fd2d5-655f-4b26-bbc1-b03f21d3890e",
+      "type": "dql",
+      "title": "Share of the timeframe in each state (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 320,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries active = avg(resilience4j.circuitbreaker.state), by:{name, state}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n| fieldsAdd pct = round(arrayAvg(active) * 100, decimals:1)\n| summarize {\n    closed = sum(if(state == \"closed\", pct)),\n    half_open = sum(if(state == \"half_open\", pct)),\n    open = sum(if(state == \"open\", pct))\n  }, by:{name}\n| sort open desc"
+        },
+        "visualization": "table",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "76bb62fd-6112-4e0c-8a11-403d5a32d91f",
+      "type": "dql",
+      "title": "Call outcome scorecard",
+      "showTitle": true,
+      "showInput": false,
+      "height": 320,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = count(resilience4j.circuitbreaker.calls), by:{name, kind}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n| fieldsAdd total = arraySum(calls)\n| summarize {\n    successful = sum(if(kind == \"successful\", total)),\n    failed = sum(if(kind == \"failed\", total)),\n    ignored = sum(if(kind == \"ignored\", total))\n  }, by:{name}\n| lookup [\n    timeseries rejected = sum(resilience4j.circuitbreaker.not.permitted.calls), by:{name}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n    | fieldsAdd notPermitted = arraySum(rejected)\n    | fields name, notPermitted\n  ], sourceField:name, lookupField:name, fields:{notPermitted}, prefix:\"cb.\"\n| fieldsAdd successful = coalesce(successful, 0), failed = coalesce(failed, 0), ignored = coalesce(ignored, 0),\n    notPermitted = coalesce(cb.notPermitted, 0)\n| fieldsAdd failurePct = round(100.0 * failed / (successful + failed), decimals:1),\n    shedPct = round(100.0 * notPermitted / (successful + failed + ignored + notPermitted), decimals:1)\n| fields name, successful, failed, ignored, notPermitted, failurePct, shedPct\n| sort failurePct desc"
+        },
+        "visualization": "table",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "73dd5770-95a0-47ea-8719-05d6ec516d44",
+      "type": "markdown",
+      "markdown": "## 2. Failures and load shedding\nFailed calls show the dependency's trouble; **not-permitted** calls are requests the OPEN breaker refused\nwithout calling the dependency at all, answered by its fallback instead. The failure rate is what each breaker\ncompares with its threshold (points before a breaker has its minimum number of calls are left out)."
+    },
+    {
+      "id": "40fb4770-dfb1-492e-be93-e7725b127811",
+      "type": "dql",
+      "title": "Failed calls per breaker",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries failed = count(resilience4j.circuitbreaker.calls), by:{name}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\")) and kind == \"failed\""
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "459dd2ef-174c-4eda-b6f7-5d8e96984598",
+      "type": "dql",
+      "title": "Not-permitted calls (shed by an OPEN breaker)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries notPermitted = sum(resilience4j.circuitbreaker.not.permitted.calls), by:{name}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))"
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "73805ca2-5625-4e3c-bd0c-be2159836ac4",
+      "type": "dql",
+      "title": "Failure rate per breaker (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries rate = avg(resilience4j.circuitbreaker.failure.rate), by:{name}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n| fieldsAdd failureRatePct = iCollectArray(if(rate[] >= 0, rate[]))\n| fieldsRemove rate"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "8ca19865-081d-4240-a4aa-257e2a6d9c9f",
+      "type": "dql",
+      "title": "Average call duration per breaker (ms)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries {total = sum(resilience4j.circuitbreaker.calls), n = count(resilience4j.circuitbreaker.calls)},\n  by:{name}, filter:in(name, array(\"core-banking-ledger\", \"fraud-scoring\", \"swift-gateway\", \"notification-service\", \"customer-profile\", \"sanctions-screening\", \"fx-rates\"))\n| fieldsAdd avgDurationMs = total[] / n[]\n| fieldsRemove total, n"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "ef4434ab-26e2-4597-af9a-1cf459bceaf7",
+      "type": "markdown",
+      "markdown": "## 3. Failure patterns, one breaker at a time\n\n### core-banking-ledger: slow, not broken\nThe ledger never returns an error. During its batch window most calls take 1.8-4 s, so this breaker opens on its\n**slow-call rate** while its failure rate stays at zero."
+    },
+    {
+      "id": "8e795833-88f5-48ca-a431-e4b364e2467e",
+      "type": "dql",
+      "title": "core-banking-ledger: slow-call rate vs failure rate (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries {slow = avg(resilience4j.circuitbreaker.slow.call.rate), failed = avg(resilience4j.circuitbreaker.failure.rate)},\n  filter:name == \"core-banking-ledger\"\n| fieldsAdd slowCallRatePct = iCollectArray(if(slow[] >= 0, slow[])), failureRatePct = iCollectArray(if(failed[] >= 0, failed[]))\n| fieldsAdd slowCallThreshold = iCollectArray(if(slow[] >= -1, 50.0))\n| fieldsRemove slow, failed"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "d7e91149-e1ce-4d60-b15a-ace7bf04834b",
+      "type": "dql",
+      "title": "core-banking-ledger: average and slowest call (ms)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries {total = sum(resilience4j.circuitbreaker.calls), n = count(resilience4j.circuitbreaker.calls),\n  slowestMs = max(resilience4j.circuitbreaker.calls)}, filter:name == \"core-banking-ledger\"\n| fieldsAdd avgMs = total[] / n[]\n| fieldsRemove total, n"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "c65110f0-5ad3-4287-b6a2-b9cf01b75ded",
+      "type": "markdown",
+      "markdown": "### fraud-scoring: timeouts under load\nModel latency grows with load during a recurring traffic peak. Past the 1 s **TimeLimiter** the call fails with a\nTimeoutException, which the breaker records as a failure. Load ramps up and down, so the breaker opens and then\nflaps between HALF_OPEN and CLOSED as the peak drains."
+    },
+    {
+      "id": "647841cb-9466-40c1-a508-b0395f36363e",
+      "type": "dql",
+      "title": "fraud-scoring: TimeLimiter outcomes",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = sum(resilience4j.timelimiter.calls), by:{kind}, filter:name == \"fraud-scoring\""
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "ed546d41-3609-42f4-92ba-506978bb555b",
+      "type": "dql",
+      "title": "fraud-scoring: breaker state (1 = in that state)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 280,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries active = max(resilience4j.circuitbreaker.state), by:{state},\n  filter:name == \"fraud-scoring\" and (state == \"open\" or state == \"half_open\")"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "dd57b569-7aa4-4528-8989-e4d593a2ae23",
+      "type": "markdown",
+      "markdown": "### swift-gateway: error bursts, and errors that don't count\nBursts of HTTP 503/502 and dropped connections open the breaker. **Validation rejects** (a malformed BIC) are\nIGNORED: a bad message says nothing about the gateway's health. Failed payments go to an outbox that is replayed\nthrough the same breaker while it is CLOSED."
+    },
+    {
+      "id": "68e4f3a6-a5d8-434d-969b-f93a131fb3d3",
+      "type": "dql",
+      "title": "swift-gateway: calls by outcome",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = count(resilience4j.circuitbreaker.calls), by:{kind}, filter:name == \"swift-gateway\""
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "c55bba8e-f566-4b98-88a6-42558c5ea2af",
+      "type": "markdown",
+      "markdown": "### notification-service vs sanctions-screening: thresholds follow criticality\nThe notification hub fails 25-45% of the time on a normal day and its breaker stays CLOSED, because its threshold\nis 80% and a dropped notification costs nothing. Sanctions screening is a compliance control that **fails closed**,\nso its breaker opens at 25%."
+    },
+    {
+      "id": "c578efa6-5f9f-4212-bf51-d4536b9f4cd7",
+      "type": "dql",
+      "title": "notification-service: failure rate vs 80% threshold (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 300,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries rate = avg(resilience4j.circuitbreaker.failure.rate), filter:name == \"notification-service\"\n| fieldsAdd failureRatePct = iCollectArray(if(rate[] >= 0, rate[])), threshold = iCollectArray(if(rate[] >= -1, 80.0))\n| fieldsRemove rate"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "c1b06832-5175-4fa1-9ecd-612ab5545f4d",
+      "type": "dql",
+      "title": "sanctions-screening: failure rate vs 25% threshold (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 300,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries rate = avg(resilience4j.circuitbreaker.failure.rate), filter:name == \"sanctions-screening\"\n| fieldsAdd failureRatePct = iCollectArray(if(rate[] >= 0, rate[])), threshold = iCollectArray(if(rate[] >= -1, 25.0))\n| fieldsRemove rate"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "3a18116d-1559-4b98-8020-0d53c8d1d1f4",
+      "type": "dql",
+      "title": "sanctions-screening: Retry outcomes",
+      "showTitle": true,
+      "showInput": false,
+      "height": 300,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = sum(resilience4j.retry.calls), by:{kind}, filter:name == \"sanctions-screening\""
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "99723b4d-a720-4cdf-999b-4a83efad3d97",
+      "type": "markdown",
+      "markdown": "### customer-profile: the control line\nThe healthy baseline. While other breakers open on schedule, this one stays CLOSED, which shows the application\nitself is fine and the trouble is in specific dependencies."
+    },
+    {
+      "id": "bab900a8-97b6-42a8-9d25-3fe7ab08b882",
+      "type": "dql",
+      "title": "customer-profile: calls by outcome",
+      "showTitle": true,
+      "showInput": false,
+      "height": 280,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = count(resilience4j.circuitbreaker.calls), by:{kind}, filter:name == \"customer-profile\""
+        },
+        "visualization": "barChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "6529a855-8b60-4bef-a05b-257b0aea4218",
+      "type": "markdown",
+      "markdown": "## 4. Multi-datacenter: fx-rates in prod-us-east-1 and prod-us-east-2\nTwo instances of the service run as separate datacenters, each with its own `fx-rates` breaker and its own random\nmarket-data feed freezes. A stale or off-market quote is recorded as a failure even though the provider answered\n200 OK. The demo client fails over to the other region when the primary can't return a live quote.\n\n> These queries split by the `datacenter` metric dimension, set per instance with\n> `management.metrics.tags.datacenter`."
+    },
+    {
+      "id": "2e481d09-4dc7-42e6-863f-c9f07545fa24",
+      "type": "dql",
+      "title": "fx-rates: failure rate by datacenter (%)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 350,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries rate = avg(resilience4j.circuitbreaker.failure.rate), by:{datacenter}, filter:name == \"fx-rates\"\n| fieldsAdd failureRatePct = iCollectArray(if(rate[] >= 0, rate[]))\n| fieldsRemove rate"
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "2f9cf544-53b8-48f4-9bb5-6b896e926146",
+      "type": "dql",
+      "title": "fx-rates: breaker OPEN by datacenter (1 = open)",
+      "showTitle": true,
+      "showInput": false,
+      "height": 280,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries open = max(resilience4j.circuitbreaker.state), by:{datacenter}, filter:name == \"fx-rates\" and state == \"open\""
+        },
+        "visualization": "lineChart",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    },
+    {
+      "id": "ab7d9975-4a6e-4347-b41e-041c0304cd85",
+      "type": "dql",
+      "title": "fx-rates: calls by datacenter and outcome",
+      "showTitle": true,
+      "showInput": false,
+      "height": 260,
+      "filterSegments": [],
+      "drilldownPath": [],
+      "previousFilterSegments": [],
+      "state": {
+        "input": {
+          "value": "timeseries calls = count(resilience4j.circuitbreaker.calls), by:{datacenter, kind}, filter:name == \"fx-rates\"\n| fieldsAdd total = arraySum(calls)\n| summarize {\n    successful = sum(if(kind == \"successful\", total)),\n    failed = sum(if(kind == \"failed\", total))\n  }, by:{datacenter}\n| lookup [\n    timeseries rejected = sum(resilience4j.circuitbreaker.not.permitted.calls), by:{datacenter}, filter:name == \"fx-rates\"\n    | fieldsAdd notPermitted = arraySum(rejected)\n    | fields datacenter, notPermitted\n  ], sourceField:datacenter, lookupField:datacenter, fields:{notPermitted}, prefix:\"cb.\"\n| fieldsAdd successful = coalesce(successful, 0), failed = coalesce(failed, 0), notPermitted = coalesce(cb.notPermitted, 0)\n| fieldsAdd failurePct = round(100.0 * failed / (successful + failed), decimals:1)\n| fields datacenter, successful, failed, notPermitted, failurePct"
+        },
+        "visualization": "table",
+        "visualizationSettings": {
+          "autoSelectVisualization": false,
+          "chartSettings": {}
+        },
+        "querySettings": {
+          "maxResultRecords": 1000,
+          "defaultScanLimitGbytes": 500,
+          "maxResultMegaBytes": 100,
+          "defaultSamplingRatio": 10,
+          "enableSampling": false
+        }
+      }
+    }
+  ]
+}
