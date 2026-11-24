@@ -128,6 +128,29 @@ resilience4j.circuitbreaker:
             minimumNumberOfCalls: 10
             failureRateThreshold: 50
             waitDurationInOpenState: 15s
+        # Sanctions screening: fail-closed compliance check, so the strictest threshold (25%).
+        # Each retry attempt is recorded separately, so reload-window errors open it quickly.
+        sanctions-screening:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 10
+            failureRateThreshold: 25
+            permittedNumberOfCallsInHalfOpenState: 5
+            waitDurationInOpenState: 30s
+        # FX market data: a 200 OK with a stale or off-market quote is a failure too, so InvalidQuoteException
+        # is added to this instance's recordExceptions alongside the usual HTTP/IO errors.
+        fx-rates:
+            baseConfig: default
+            slidingWindowSize: 20
+            minimumNumberOfCalls: 10
+            failureRateThreshold: 50
+            permittedNumberOfCallsInHalfOpenState: 3
+            waitDurationInOpenState: 20s
+            recordExceptions:
+                - org.springframework.web.client.HttpServerErrorException
+                - java.util.concurrent.TimeoutException
+                - java.io.IOException
+                - io.github.robwin.exception.InvalidQuoteException
 resilience4j.retry:
     configs:
         default:
@@ -144,6 +167,14 @@ resilience4j.retry:
             baseConfig: default
         backendB:
             baseConfig: default
+        # Two quick retries (250ms, then 500ms) before holding a payment for compliance review.
+        # CallNotPermittedException isn't in retryExceptions, so an OPEN breaker stops retries immediately.
+        sanctions-screening:
+            baseConfig: default
+            maxAttempts: 3
+            waitDuration: 250ms
+            enableExponentialBackoff: true
+            exponentialBackoffMultiplier: 2
 resilience4j.bulkhead:
     configs:
         default:
@@ -240,6 +271,32 @@ customer-profile.simulation:
     baseline-error-probability: 0.005
     degraded-error-probability: 0.5
     max-cache-staleness: 30m
+
+# Sanctions screening simulation (SactionsScreeningService)
+# mode: HEALTHY | SCHEDULED | DOWN. SCHEDULED reloads the watchlist during the last refresh-window of every
+# cycle-length, when most calls fail with HTTP 503. Change at runtime with: PUT /sanctions/mode/{mode}
+sanctions-screening.simulation:
+    mode: SCHEDULED
+    cycle-length: 15m
+    refresh-window: 2m
+    refresh-error-probability: 0.7
+    baseline-error-probability: 0.01
+    potential-match-probability: 0.03
+
+# FX rate simulation (ForeignExchangeRateService)
+# mode: HEALTHY | FLAKY | FROZEN | DOWN. FLAKY has 2% HTTP errors, rare off-market ticks, and random feed
+# freezes where quotes go stale after max-quote-age. Cached rates are used up to cache-ttl old.
+# Change at runtime with: PUT /fx/mode/{mode}
+fx-rates.simulation:
+    mode: FLAKY
+    max-quote-age: 5s
+    off-market-threshold: 0.03
+    cache-ttl: 10m
+    baseline-error-probability: 0.02
+    off-market-probability: 0.01
+    mean-time-between-freezes: 6m
+    freeze-min: 60s
+    freeze-max: 150s
 
 resilience4j.timelimiter:
     configs:
